@@ -21,6 +21,39 @@ import {
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let memoryGuestId = 1;
+let memoryRsvpResponseId = 1;
+let memoryWeddingId = 1;
+let memoryTokenId = 1;
+let memoryInvitationId = 1;
+
+const memoryWeddings: Array<any> = [];
+const memoryGuests: Array<any> = [];
+const memoryRsvpResponses: Array<any> = [];
+const memoryRsvpTokens: Array<any> = [];
+const memoryInvitations: Array<any> = [];
+
+function getOrCreateMemoryWedding(userId: number) {
+  let wedding = memoryWeddings.find(w => w.userId === userId);
+  if (!wedding) {
+    wedding = {
+      id: memoryWeddingId++,
+      userId,
+      brideNames: null,
+      groomNames: null,
+      weddingDate: null,
+      venue: null,
+      guestCount: 0,
+      rsvpDeadline: null,
+      budget: null,
+      theme: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    memoryWeddings.push(wedding);
+  }
+  return wedding;
+}
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -112,7 +145,7 @@ export async function getUserByOpenId(openId: string) {
 // Wedding queries
 export async function getWeddingByUserId(userId: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return getOrCreateMemoryWedding(userId);
 
   const result = await db
     .select()
@@ -132,7 +165,11 @@ export async function createWedding(data: {
   budget?: string;
 }) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const wedding = getOrCreateMemoryWedding(data.userId);
+    Object.assign(wedding, data, { updatedAt: new Date() });
+    return wedding;
+  }
 
   const result = await db.insert(weddings).values({
     userId: data.userId,
@@ -149,7 +186,11 @@ export async function createWedding(data: {
 // Guest queries
 export async function getGuestsByWeddingId(weddingId: number) {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return memoryGuests
+      .filter(guest => guest.weddingId === weddingId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
 
   return await db
     .select()
@@ -170,7 +211,28 @@ export async function createGuest(data: {
   notes?: string;
 }) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const now = new Date();
+    const guest = {
+      id: memoryGuestId++,
+      weddingId: data.weddingId,
+      name: data.name,
+      email: data.email ?? null,
+      phone: data.phone ?? null,
+      group: data.group,
+      role: data.role || "regular",
+      status: "pending",
+      mealPreference: data.mealPreference ?? null,
+      plusOnes: data.plusOnes || 0,
+      notes: data.notes ?? null,
+      invitationSentAt: null,
+      rsvpedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    memoryGuests.push(guest);
+    return guest;
+  }
 
   const result = await db.insert(guests).values({
     weddingId: data.weddingId,
@@ -209,21 +271,31 @@ export async function updateGuest(
   }>
 ) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const guest = memoryGuests.find(item => item.id === guestId);
+    if (!guest) return [];
+    Object.assign(guest, data, { updatedAt: new Date() });
+    return [guest];
+  }
 
   return await db.update(guests).set(data as any).where(eq(guests.id, guestId));
 }
 
 export async function deleteGuest(guestId: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const index = memoryGuests.findIndex(item => item.id === guestId);
+    if (index === -1) return [];
+    const [deleted] = memoryGuests.splice(index, 1);
+    return [deleted];
+  }
 
   return await db.delete(guests).where(eq(guests.id, guestId));
 }
 
 export async function getGuestById(guestId: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return memoryGuests.find(guest => guest.id === guestId);
 
   const result = await db
     .select()
@@ -237,7 +309,9 @@ export async function getGuestById(guestId: number) {
 // RSVP queries
 export async function getRsvpResponsesByWeddingId(weddingId: number) {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return memoryRsvpResponses.filter(response => response.weddingId === weddingId);
+  }
 
   return await db
     .select()
@@ -247,7 +321,11 @@ export async function getRsvpResponsesByWeddingId(weddingId: number) {
 
 export async function getRsvpResponseByGuestId(weddingId: number, guestId: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) {
+    return memoryRsvpResponses.find(
+      response => response.weddingId === weddingId && response.guestId === guestId
+    );
+  }
 
   const result = await db
     .select()
@@ -268,7 +346,35 @@ export async function createOrUpdateRsvpResponse(data: {
   notes?: string;
 }) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const existing = memoryRsvpResponses.find(
+      response =>
+        response.weddingId === data.weddingId && response.guestId === data.guestId
+    );
+    const payload = {
+      weddingId: data.weddingId,
+      guestId: data.guestId,
+      attending: data.attending,
+      mealPreference: data.mealPreference ?? null,
+      plusOnesCount: data.plusOnesCount || 0,
+      plusOnesDetails: data.plusOnesDetails ?? [],
+      notes: data.notes ?? null,
+      updatedAt: new Date(),
+    };
+    if (existing) {
+      Object.assign(existing, payload);
+      return existing;
+    }
+
+    const created = {
+      id: memoryRsvpResponseId++,
+      ...payload,
+      respondedAt: new Date(),
+      createdAt: new Date(),
+    };
+    memoryRsvpResponses.push(created);
+    return created;
+  }
 
   const existing = await getRsvpResponseByGuestId(data.weddingId, data.guestId);
 
@@ -432,13 +538,92 @@ export async function createEmailLog(data: {
   });
 }
 
+// Invitation queries
+export async function getInvitationsByWeddingId(weddingId: number) {
+  const db = await getDb();
+  if (!db) {
+    return memoryInvitations
+      .filter(invitation => invitation.weddingId === weddingId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  return await db
+    .select()
+    .from(invitations)
+    .where(eq(invitations.weddingId, weddingId))
+    .orderBy(desc(invitations.createdAt));
+}
+
+export async function createInvitation(data: {
+  weddingId: number;
+  guestId?: number | null;
+  title: string;
+  content: string;
+  imageUrl?: string | null;
+  includeRsvpLink?: boolean;
+  status?: "draft" | "scheduled" | "sent" | "failed";
+}) {
+  const db = await getDb();
+  if (!db) {
+    const row = {
+      id: memoryInvitationId++,
+      weddingId: data.weddingId,
+      guestId: data.guestId ?? null,
+      title: data.title,
+      content: data.content,
+      imageUrl: data.imageUrl ?? null,
+      includeRsvpLink: data.includeRsvpLink ?? true,
+      sentAt: null,
+      status: data.status ?? "draft",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    memoryInvitations.push(row);
+    return row;
+  }
+
+  await db.insert(invitations).values({
+    weddingId: data.weddingId,
+    guestId: data.guestId ?? null,
+    title: data.title,
+    content: data.content,
+    imageUrl: data.imageUrl ?? null,
+    includeRsvpLink: data.includeRsvpLink ?? true,
+    status: data.status ?? "draft",
+  });
+
+  const created = await db
+    .select()
+    .from(invitations)
+    .where(eq(invitations.weddingId, data.weddingId))
+    .orderBy(desc(invitations.createdAt))
+    .limit(1);
+
+  return created[0];
+}
+
 // RSVP Token queries
 export async function createRsvpToken(data: {
   weddingId: number;
   guestId: number;
 }) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) {
+    const token = `rsvp-${data.guestId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+    const row = {
+      id: memoryTokenId++,
+      weddingId: data.weddingId,
+      guestId: data.guestId,
+      token,
+      expiresAt,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    memoryRsvpTokens.push(row);
+    return { token, expiresAt };
+  }
 
   // Generate unique token
   const token = `rsvp-${data.guestId}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -460,7 +645,7 @@ export async function createRsvpToken(data: {
 
 export async function getRsvpTokenByToken(token: string) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return memoryRsvpTokens.find(row => row.token === token);
 
   const result = await db
     .select()

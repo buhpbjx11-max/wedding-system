@@ -81,6 +81,70 @@ export const appRouter = router({
       }),
   }),
 
+  invitations: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const wedding = await db.getWeddingByUserId(ctx.user.id);
+      if (!wedding) return [];
+      return await db.getInvitationsByWeddingId(wedding.id);
+    }),
+
+    create: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(1),
+          content: z.string().min(1),
+          imageUrls: z.array(z.string().url()).default([]),
+          audience: z.enum(["all", "bride", "groom", "shared"]),
+          selectedGuestIds: z.array(z.number()).default([]),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const wedding = await db.getWeddingByUserId(ctx.user.id);
+        if (!wedding) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const allGuests = await db.getGuestsByWeddingId(wedding.id);
+
+        const baseGuestsByAudience = allGuests.filter(guest => {
+          if (input.audience === "all") return true;
+          if (input.audience === "shared") return guest.group === "mutual";
+          return guest.group === input.audience;
+        });
+
+        const finalGuests =
+          input.selectedGuestIds.length > 0
+            ? baseGuestsByAudience.filter(guest =>
+                input.selectedGuestIds.includes(guest.id)
+              )
+            : baseGuestsByAudience;
+
+        if (finalGuests.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "No guests selected for invitation",
+          });
+        }
+
+        const created = await Promise.all(
+          finalGuests.map(guest =>
+            db.createInvitation({
+              weddingId: wedding.id,
+              guestId: guest.id,
+              title: input.title,
+              content: input.content,
+              imageUrl: input.imageUrls[0] ?? null,
+              includeRsvpLink: true,
+              status: "draft",
+            })
+          )
+        );
+
+        return {
+          success: true,
+          createdCount: created.length,
+        };
+      }),
+  }),
+
   rsvp: router({
     generateToken: protectedProcedure
       .input(z.object({ guestId: z.number() }))
@@ -172,8 +236,12 @@ export const appRouter = router({
       };
 
       responses.forEach((r) => {
-        if (r.mealPreference && r.attending) {
-          meals[r.mealPreference]++;
+        if (
+          r.mealPreference &&
+          r.attending &&
+          r.mealPreference in meals
+        ) {
+          meals[r.mealPreference as keyof typeof meals]++;
         }
         if (r.plusOnesDetails && r.attending) {
           (r.plusOnesDetails as string[]).forEach((meal: string) => {
