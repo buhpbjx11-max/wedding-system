@@ -274,6 +274,32 @@ export const appRouter = router({
     }),
   }),
 
+  whatsapp: router({
+    prepareList: protectedProcedure
+      .input(z.object({ guestIds: z.array(z.number()).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const wedding = await db.getWeddingByUserId(ctx.user.id);
+        if (!wedding) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const allGuests = await db.getGuestsByWeddingId(wedding.id);
+        const targets = input.guestIds?.length
+          ? allGuests.filter(g => input.guestIds!.includes(g.id))
+          : allGuests;
+
+        const result = await Promise.all(
+          targets.map(async guest => {
+            let token = (await db.getRsvpTokenByGuestId(guest.id))?.token;
+            if (!token) {
+              const created = await db.createRsvpToken({ weddingId: wedding.id, guestId: guest.id });
+              token = created.token;
+            }
+            return { guestId: guest.id, name: guest.name, phone: guest.phone ?? null, token };
+          })
+        );
+        return result;
+      }),
+  }),
+
   wedding: router({
     get: protectedProcedure.query(async ({ ctx }) => {
       return (await db.getWeddingByUserId(ctx.user.id)) ?? null;

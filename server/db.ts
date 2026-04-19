@@ -1,5 +1,8 @@
 import { eq, and, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { migrate } from "drizzle-orm/mysql2/migrator";
+import path from "path";
+import { fileURLToPath } from "url";
 import {
   InsertUser,
   users,
@@ -65,6 +68,19 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+export async function runMigrations() {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const migrationsFolder = path.resolve(__dirname, "../drizzle");
+    await migrate(db, { migrationsFolder });
+    console.log("[DB] Migrations complete");
+  } catch (err) {
+    console.error("[DB] Migration error:", err);
+  }
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -652,6 +668,19 @@ export async function getRsvpTokenByToken(token: string) {
     .select()
     .from(rsvpTokens)
     .where(eq(rsvpTokens.token, token))
+    .limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getRsvpTokenByGuestId(guestId: number) {
+  const db = await getDb();
+  if (!db) return memoryRsvpTokens.filter(t => t.guestId === guestId).at(-1);
+
+  const result = await db
+    .select()
+    .from(rsvpTokens)
+    .where(eq(rsvpTokens.guestId, guestId))
     .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
