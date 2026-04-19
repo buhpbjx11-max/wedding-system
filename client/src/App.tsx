@@ -9,6 +9,13 @@ import Home from "./pages/Home";
 import WeddingLayout from "./components/WeddingLayout";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+
+const PageLoader = () => (
+  <div className="flex items-center justify-center h-96">
+    <Loader2 className="w-7 h-7 animate-spin text-accent" />
+  </div>
+);
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
@@ -21,51 +28,77 @@ function Router() {
     );
   }
 
-  // Public guest RSVP route (no auth required)
   const GuestRSVP = React.lazy(() => import("./pages/GuestRSVP"));
 
   if (!isAuthenticated) {
     return (
       <Switch>
-        <Route path={"/"} component={Home} />
-        <Route path={"/guest-rsvp/:token"}>
-          {(params: any) => <GuestRSVP token={params.token} />}
+        <Route path="/" component={Home} />
+        <Route path="/guest-rsvp/:token">
+          {(params: any) => (
+            <Suspense fallback={<PageLoader />}>
+              <GuestRSVP token={params.token} />
+            </Suspense>
+          )}
         </Route>
-        <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />
       </Switch>
     );
   }
 
-  // Protected routes with WeddingLayout
   const Dashboard = React.lazy(() => import("./pages/Dashboard"));
   const Guests = React.lazy(() => import("./pages/Guests"));
   const Invitations = React.lazy(() => import("./pages/Invitations"));
+  const Designs = React.lazy(() => import("./pages/Designs"));
   const RSVPSummary = React.lazy(() => import("./pages/RSVPSummary"));
   const Seating = React.lazy(() => import("./pages/Seating"));
-  const Budget = React.lazy(() => import("./pages/Budget"));
-  const Timeline = React.lazy(() => import("./pages/Timeline"));
-  const Gallery = React.lazy(() => import("./pages/Gallery"));
+  const Settings = React.lazy(() => import("./pages/Settings"));
+  const Onboarding = React.lazy(() => import("./pages/Onboarding"));
+
+  return <AuthenticatedApp
+    Dashboard={Dashboard} Guests={Guests} Invitations={Invitations}
+    Designs={Designs} RSVPSummary={RSVPSummary} Seating={Seating}
+    Settings={Settings} Onboarding={Onboarding} GuestRSVP={GuestRSVP}
+  />;
+}
+
+function AuthenticatedApp({ Dashboard, Guests, Invitations, Designs, RSVPSummary, Seating, Settings, Onboarding, GuestRSVP }: any) {
+  const { data: wedding, isLoading: weddingLoading } = trpc.wedding.get.useQuery();
+
+  if (weddingLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-accent" />
+      </div>
+    );
+  }
+
+  if (!wedding?.brideNames) {
+    return (
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="w-8 h-8 animate-spin text-accent" /></div>}>
+        <Onboarding />
+      </Suspense>
+    );
+  }
 
   return (
     <WeddingLayout>
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-96">
-            <Loader2 className="w-8 h-8 animate-spin text-accent" />
-          </div>
-        }
-      >
+      <Suspense fallback={<div className="flex items-center justify-center h-96"><Loader2 className="w-7 h-7 animate-spin text-accent" /></div>}>
         <Switch>
-          <Route path={"/"} component={Dashboard} />
-          <Route path={"/guests"} component={Guests} />
-          <Route path={"/invitations"} component={Invitations} />
-          <Route path={"/rsvp"} component={RSVPSummary} />
-          <Route path={"/seating"} component={Seating} />
-          <Route path={"/budget"} component={Budget} />
-          <Route path={"/timeline"} component={Timeline} />
-          <Route path={"/gallery"} component={Gallery} />
-          <Route path={"/404"} component={NotFound} />
+          <Route path="/" component={Dashboard} />
+          <Route path="/guests" component={Guests} />
+          <Route path="/invitations" component={Invitations} />
+          <Route path="/designs" component={Designs} />
+          <Route path="/rsvp" component={RSVPSummary} />
+          <Route path="/seating" component={Seating} />
+          <Route path="/settings" component={Settings} />
+          <Route path="/guest-rsvp/:token">
+            {(params: any) => (
+              <Suspense fallback={<div className="flex items-center justify-center h-96"><Loader2 className="w-7 h-7 animate-spin text-accent" /></div>}>
+                <GuestRSVP token={params.token} />
+              </Suspense>
+            )}
+          </Route>
           <Route component={NotFound} />
         </Switch>
       </Suspense>

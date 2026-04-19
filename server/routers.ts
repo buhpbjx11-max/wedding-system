@@ -163,15 +163,10 @@ export const appRouter = router({
     getByToken: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
-        // Demo token for testing
         if (input.token === "demo-token-12345") {
           return {
-            id: 1,
-            name: "דנה כהן",
-            phone: "0501234567",
-            group: "bride",
-            role: "regular",
-            weddingId: 1,
+            guest: { id: 1, name: "דנה כהן", phone: "0501234567", group: "bride", role: "regular", weddingId: 1 },
+            event: { brideNames: "יעל ודן", groomNames: null, weddingDate: null, venue: "אולם השרון", theme: null },
           };
         }
 
@@ -181,7 +176,12 @@ export const appRouter = router({
         const guest = await db.getGuestById(rsvpToken.guestId);
         if (!guest) throw new TRPCError({ code: "NOT_FOUND" });
 
-        return guest;
+        const wedding = await db.getWeddingByUserId(rsvpToken.weddingId);
+        const event = wedding
+          ? { brideNames: wedding.brideNames, groomNames: wedding.groomNames, weddingDate: wedding.weddingDate, venue: wedding.venue, theme: wedding.theme }
+          : null;
+
+        return { guest, event };
       }),
 
     submit: publicProcedure
@@ -192,10 +192,10 @@ export const appRouter = router({
           plusOnesCount: z.number().default(0),
           mealPreference: z.enum(["regular", "vegetarian", "vegan", "glutenFree"]).optional(),
           plusOnesMeals: z.array(z.enum(["regular", "vegetarian", "vegan", "glutenFree"])).optional(),
+          notes: z.string().optional(),
         })
       )
       .mutation(async ({ input }) => {
-        // Demo token for testing
         if (input.token === "demo-token-12345") {
           return { success: true };
         }
@@ -203,14 +203,25 @@ export const appRouter = router({
         const rsvpToken = await db.getRsvpTokenByToken(input.token);
         if (!rsvpToken) throw new TRPCError({ code: "NOT_FOUND" });
 
-        return await db.createOrUpdateRsvpResponse({
+        // Save RSVP response
+        await db.createOrUpdateRsvpResponse({
           weddingId: rsvpToken.weddingId,
           guestId: rsvpToken.guestId,
           attending: input.attending,
           mealPreference: input.mealPreference,
           plusOnesCount: input.plusOnesCount,
           plusOnesDetails: input.plusOnesMeals || [],
+          notes: input.notes,
         });
+
+        // Update guest status and plusOnes to reflect RSVP
+        await db.updateGuest(rsvpToken.guestId, {
+          status: input.attending ? "confirmed" : "declined",
+          plusOnes: input.attending ? input.plusOnesCount : 0,
+          mealPreference: input.mealPreference as any,
+        });
+
+        return { success: true };
       }),
 
     summary: protectedProcedure.query(async ({ ctx }) => {
@@ -261,6 +272,73 @@ export const appRouter = router({
         meals,
       };
     }),
+  }),
+
+  wedding: router({
+    get: protectedProcedure.query(async ({ ctx }) => {
+      return (await db.getWeddingByUserId(ctx.user.id)) ?? null;
+    }),
+    update: protectedProcedure
+      .input(
+        z.object({
+          brideNames: z.string().optional(),
+          groomNames: z.string().optional(),
+          weddingDate: z.string().optional(),
+          venue: z.string().optional(),
+          theme: z.string().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        return await db.updateWedding(ctx.user.id, {
+          brideNames: input.brideNames ?? null,
+          groomNames: input.groomNames ?? null,
+          weddingDate: input.weddingDate ? new Date(input.weddingDate) : null,
+          venue: input.venue ?? null,
+          theme: input.theme ?? null,
+        });
+      }),
+  }),
+
+  designs: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const wedding = await db.getWeddingByUserId(ctx.user.id);
+      if (!wedding) return [];
+      return await db.getDesignsByWeddingId(wedding.id);
+    }),
+    create: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(1),
+          type: z.enum(["text", "image"]),
+          content: z.string().min(1),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const wedding = await db.getWeddingByUserId(ctx.user.id);
+        if (!wedding) throw new TRPCError({ code: "NOT_FOUND" });
+        return await db.createDesign({ weddingId: wedding.id, ...input });
+      }),
+    update: protectedProcedure
+      .input(
+        z.object({
+          designId: z.number(),
+          title: z.string().optional(),
+          type: z.enum(["text", "image"]).optional(),
+          content: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        return await db.updateDesign(input.designId, {
+          title: input.title,
+          type: input.type,
+          content: input.content,
+        });
+      }),
+    delete: protectedProcedure
+      .input(z.object({ designId: z.number() }))
+      .mutation(async ({ input }) => {
+        return await db.deleteDesign(input.designId);
+      }),
   }),
 });
 

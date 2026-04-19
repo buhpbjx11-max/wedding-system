@@ -263,6 +263,7 @@ export async function updateGuest(
     name: string;
     email: string;
     phone: string;
+    group: "bride" | "groom" | "mutual";
     role: "regular" | "vip" | "bridesmaid" | "groomsman";
     status: "pending" | "confirmed" | "declined";
     mealPreference: "regular" | "vegetarian" | "vegan" | "glutenFree";
@@ -654,4 +655,78 @@ export async function getRsvpTokenByToken(token: string) {
     .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+// Wedding update
+export async function updateWedding(
+  userId: number,
+  data: Partial<{
+    brideNames: string | null;
+    groomNames: string | null;
+    weddingDate: Date | null;
+    venue: string | null;
+    theme: string | null;
+  }>
+) {
+  const db = await getDb();
+  if (!db) {
+    let wedding = memoryWeddings.find(w => w.userId === userId);
+    if (!wedding) wedding = getOrCreateMemoryWedding(userId);
+    Object.assign(wedding, data, { updatedAt: new Date() });
+    return wedding;
+  }
+  const existing = await getWeddingByUserId(userId);
+  if (!existing) {
+    await db.insert(weddings).values({ userId, ...data } as any);
+  } else {
+    await db.update(weddings).set(data as any).where(eq(weddings.userId, userId));
+  }
+  return await getWeddingByUserId(userId);
+}
+
+// In-memory designs store (no DB table yet)
+let memoryDesignId = 1;
+const memoryDesigns: Array<{
+  id: number;
+  weddingId: number;
+  title: string;
+  type: "text" | "image";
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+
+export async function getDesignsByWeddingId(weddingId: number) {
+  return [...memoryDesigns.filter(d => d.weddingId === weddingId)].sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+  );
+}
+
+export async function createDesign(data: {
+  weddingId: number;
+  title: string;
+  type: "text" | "image";
+  content: string;
+}) {
+  const now = new Date();
+  const design = { id: memoryDesignId++, ...data, createdAt: now, updatedAt: now };
+  memoryDesigns.push(design);
+  return design;
+}
+
+export async function updateDesign(
+  designId: number,
+  data: Partial<{ title: string; type: "text" | "image"; content: string }>
+) {
+  const design = memoryDesigns.find(d => d.id === designId);
+  if (!design) return null;
+  Object.assign(design, data, { updatedAt: new Date() });
+  return design;
+}
+
+export async function deleteDesign(designId: number) {
+  const index = memoryDesigns.findIndex(d => d.id === designId);
+  if (index === -1) return null;
+  const [deleted] = memoryDesigns.splice(index, 1);
+  return deleted;
 }
